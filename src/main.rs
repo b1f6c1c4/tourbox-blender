@@ -1,6 +1,6 @@
 #![feature(generic_arg_infer)]
 
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, env};
 
 use bluer::{
     gatt::remote::{Characteristic, Descriptor, Service},
@@ -14,7 +14,6 @@ use tokio::signal::unix::{signal, SignalKind};
 
 type TBResult<T> = Result<T, Box<dyn Error>>;
 
-const DEVICE_ADDR: bluer::Address = bluer::Address::new([0xDE, 0x85, 0xF6, 0xD0, 0xB1, 0xF2]);
 const UUID_TOURBOX_SERVICE: Uuid = Uuid::from_u128(0xfff000001000800000805f9b34fb);
 const UUID_CHAR0011: Uuid = Uuid::from_u128(0xfff300001000800000805f9b34fb);
 const UUID_CHAR0011_DESC0013: Uuid = Uuid::from_u128(0x290200001000800000805f9b34fb);
@@ -184,6 +183,20 @@ async fn find_descriptor(characteristic: &Characteristic, uuid: Uuid) -> Descrip
 
 #[tokio::main]
 async fn main() -> TBResult<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <MAC-ADDRESS>", args[0]);
+        std::process::exit(1);
+    }
+    let mac_address_str = &args[1];
+    let device_addr = match mac_address_str.parse::<bluer::Address>() {
+        Ok(address) => address,
+        Err(e) => {
+            eprintln!("Failed to convert MAC address: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     let stop = async {
         signal(SignalKind::interrupt()).unwrap().recv().await;
     }
@@ -197,7 +210,7 @@ async fn main() -> TBResult<()> {
         eprintln!("Scanning...");
         while let Some(device) = devices.next().await {
             if let AdapterEvent::DeviceAdded(addr) = device {
-                if addr == DEVICE_ADDR {
+                if addr == device_addr {
                     return Ok(adapter);
                 }
             }
@@ -211,7 +224,7 @@ async fn main() -> TBResult<()> {
         },
         result = startup => result?,
     };
-    let mut tb = Tourbox::start_server(DEVICE_ADDR, adapter, stop).await?;
+    let mut tb = Tourbox::start_server(device_addr, adapter, stop).await?;
     eprintln!("Device connected! :)");
     tb.initial_protocol().await?;
     tb.notifications().await?;
