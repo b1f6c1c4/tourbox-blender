@@ -1,40 +1,37 @@
 from functools import partial
-from os import kill
-from pathlib import Path
-from signal import SIGINT
-from subprocess import PIPE, Popen
+import socket
 from threading import Thread
-from typing import IO
 
 import bpy
 
 from tourbox_addon.events import on_input_event
 
 
-daemon = None
+sock = None
 
 
 def start_daemon():
-    global daemon
-    if daemon is not None:
+    global sock
+    if sock is not None:
         return
-    exe = str(Path(__file__, "../tbelite").resolve())
-    daemon = Popen([exe], stdout=PIPE)
-    t = Thread(target=thread_entry, args=(daemon.stdout,))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", 21404))
+    t = Thread(target=thread_entry, args=(sock,))
     t.start()
 
 
 def stop_daemon():
-    global daemon
-    if daemon is None:
+    global sock
+    if sock is None:
         return
-    kill(daemon.pid, SIGINT)
-    daemon = None
+    sock.close()
+    sock = None
 
 
-def thread_entry(file: IO):
+def thread_entry(sock):
     while True:
-        data = file.readline().decode("utf-8").strip()
+        data, addr = sock.recvfrom(1024)
+        data = data.decode()
         if data != "Unknown" and data.strip():
             # Hack to get back to a "safe" blender thread, hopefully. But nothing is certain
             bpy.app.timers.register(partial(on_input_event, data), first_interval=0)
