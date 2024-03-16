@@ -1,11 +1,13 @@
 #![feature(generic_arg_infer)]
 
 use std::{error::Error, fmt::Display, env};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 
 use bluer::{
     gatt::remote::{Characteristic, Descriptor, Service},
     Adapter, AdapterEvent, Address, Device, Uuid,
 };
+use clap::{arg, command, value_parser};
 use futures::stream::StreamExt;
 use futures::{future::Shared, Future, FutureExt};
 use input::TourboxInput;
@@ -121,7 +123,8 @@ impl<F: Future<Output = ()>> Tourbox<F> {
             _ = self.shutdown.clone() => ShutdownError::new(),
         }
     }
-    pub async fn notifications(&mut self) -> TBResult<()> {
+    pub async fn notifications<E>(&mut self, func: E) -> TBResult<()>
+        where E: Fn(TourboxInput) -> () {
         let mut buffer = [0u8; 4096];
         eprintln!("Listening for events...");
         loop {
@@ -149,7 +152,7 @@ impl<F: Future<Output = ()>> Tourbox<F> {
                 eprintln!("Discarded {} bytes (read too much)", amount);
                 continue;
             };
-            println!("{}", event);
+            func(event);
         }
     }
 }
@@ -183,19 +186,40 @@ async fn find_descriptor(characteristic: &Characteristic, uuid: Uuid) -> Descrip
 
 #[tokio::main]
 async fn main() -> TBResult<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <MAC-ADDRESS>", args[0]);
-        std::process::exit(1);
-    }
-    let mac_address_str = &args[1];
-    let device_addr = match mac_address_str.parse::<bluer::Address>() {
-        Ok(address) => address,
-        Err(e) => {
-            eprintln!("Failed to convert MAC address: {}", e);
-            std::process::exit(1);
-        }
+    let matches = command!()
+        .version("0.1.0")
+        .author("Author Name <email@example.com>")
+        .about("Stream data from TourBox Elite to UDP.")
+        .arg(
+            arg!(-u <IP> "IP address to which I'll send UDP packages")
+                .value_parser(value_parser!(IpAddr))
+                .default_value("127.0.0.1"),
+        )
+        .arg(
+            arg!(-p <PORT> "Port to which I'll send UDP packages")
+                .value_parser(value_parser!(u16))
+                .default_value("21404"),
+        )
+        .arg(
+            arg!(<ADDR> "Sets the Bluetooth MAC address of the device")
+                .required(true)
+                .index(1)
+                .value_parser(value_parser!(bluer::Address)),
+        )
+        .get_matches();
+
+    let socket_addr = SocketAddr::from((
+            *matches.get_one::<IpAddr>("IP").unwrap(),
+            *matches.get_one::<u16>("PORT").unwrap(),
+    ));
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect(socket_addr)?;
+    let emitter = |e: TourboxInput| {
+        let str = e.to_string();
+        socket.send(str.as_bytes()).unwrap_or(0);
     };
+
+    let device_addr = *matches.get_one::<bluer::Address>("ADDR").expect("");
 
     let stop = async {
         signal(SignalKind::interrupt()).unwrap().recv().await;
@@ -227,7 +251,7 @@ async fn main() -> TBResult<()> {
     let mut tb = Tourbox::start_server(device_addr, adapter, stop).await?;
     eprintln!("Device connected! :)");
     tb.initial_protocol().await?;
-    tb.notifications().await?;
+    tb.notifications(emitter).await?;
 
     eprintln!("Exited cleanly");
     Ok(())
