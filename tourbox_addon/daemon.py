@@ -29,9 +29,16 @@ def stop_daemon():
 
 
 def thread_entry(sock):
+    tbd = False
     while True:
         data, addr = sock.recvfrom(1024)
         data = data.decode()
         if data != "Unknown" and data.strip():
-            # Hack to get back to a "safe" blender thread, hopefully. But nothing is certain
+            if data == "TallDialPress":
+                tbd = True
+            elif data == "TallDialRelease":
+                tbd = False
+            elif data == "ButtonNearTallDialPress":
+                stop_daemon()
+                break
             bpy.app.timers.register(partial(on_input_event, data), first_interval=0)
