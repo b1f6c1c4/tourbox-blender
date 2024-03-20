@@ -34,11 +34,13 @@ def thread_entry(sock):
         data, addr = sock.recvfrom(1024)
         data = data.decode()
         if data != "Unknown" and data.strip():
-            if data == "TallDialPress":
+            if data == "ButtonNearTallDialPress":
                 tbd = True
-            elif data == "TallDialRelease":
-                tbd = False
-            elif data == "ButtonNearTallDialPress":
+            elif data == "TallDialPress" and tbd:
                 stop_daemon()
                 break
+            else:
+                tbd = False
             bpy.app.timers.register(partial(on_input_event, data), first_interval=0)
+        else:
+            print(data)
